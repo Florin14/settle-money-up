@@ -9,8 +9,9 @@ interface ThemeModeContextValue {
 
 const ThemeModeContext = createContext<ThemeModeContextValue | undefined>(undefined);
 
-const STORAGE_KEY = 'settleup:theme';
+const STORAGE_KEY = 'equi:theme';
 
+// Light is the flagship look; the OS dark preference is respected.
 function getInitialMode(): ThemeMode {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored === 'light' || stored === 'dark') return stored;

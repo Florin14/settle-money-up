@@ -74,6 +74,7 @@ export interface CreatePersonalExpenseInput {
   description: string;
   amount: number;
   category: ExpenseCategory;
+  currency?: string;
   expenseDate?: string;
   notes?: string;
 }
@@ -94,6 +95,7 @@ export function useCreatePersonalExpense() {
           description: input.description,
           amount: input.amount,
           category: input.category,
+          currency: input.currency ?? 'EUR',
           expense_date: input.expenseDate,
           notes: input.notes ?? null,
         })
@@ -104,6 +106,26 @@ export function useCreatePersonalExpense() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses', 'personal'] });
+    },
+  });
+}
+
+/** Works for both personal and group expenses; RLS decides who may delete. */
+export function useDeleteExpense() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (expense: { id: string; group_id: string | null }) => {
+      const { error } = await supabase.from('expenses').delete().eq('id', expense.id);
+      if (error) throw error;
+    },
+    onSuccess: (_data, expense) => {
+      if (expense.group_id) {
+        queryClient.invalidateQueries({ queryKey: expenseKeys.byGroup(expense.group_id) });
+        queryClient.invalidateQueries({ queryKey: ['balances', expense.group_id] });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ['expenses', 'personal'] });
+      }
     },
   });
 }

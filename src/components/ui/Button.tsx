@@ -16,11 +16,11 @@ const sizeStyles = {
     font-size: ${({ theme }) => theme.typography.fontSize.sm};
   `,
   md: css`
-    padding: ${({ theme }) => `${theme.spacing.xs} ${theme.spacing.md}`};
+    padding: ${({ theme }) => `${theme.spacing.xs} ${theme.spacing.lg}`};
     font-size: ${({ theme }) => theme.typography.fontSize.md};
   `,
   lg: css`
-    padding: ${({ theme }) => `${theme.spacing.sm} ${theme.spacing.lg}`};
+    padding: ${({ theme }) => `${theme.spacing.sm} ${theme.spacing.xl}`};
     font-size: ${({ theme }) => theme.typography.fontSize.lg};
   `,
 } as const;
@@ -29,9 +29,11 @@ const variantStyles = {
   primary: css`
     background: ${({ theme }) => theme.colors.brand.primary};
     color: ${({ theme }) => theme.colors.text.onBrand};
+    box-shadow: ${({ theme }) => theme.shadows.sm};
 
     &:hover:not(:disabled) {
       background: ${({ theme }) => theme.colors.brand.primaryHover};
+      box-shadow: ${({ theme }) => theme.shadows.glowViolet};
     }
     &:active:not(:disabled) {
       background: ${({ theme }) => theme.colors.brand.primaryActive};
@@ -58,10 +60,10 @@ const variantStyles = {
   `,
   danger: css`
     background: ${({ theme }) => theme.colors.negative.solid};
-    color: ${({ theme }) => theme.colors.text.onBrand};
+    color: #fff;
 
     &:hover:not(:disabled) {
-      filter: brightness(0.92);
+      filter: brightness(0.94);
     }
   `,
 } as const;
@@ -71,13 +73,15 @@ export const Button = styled.button<ButtonProps>`
   align-items: center;
   justify-content: center;
   gap: ${({ theme }) => theme.spacing.xs};
-  border-radius: ${({ theme }) => theme.radii.md};
+  border-radius: ${({ theme }) => theme.radii.full};
   font-weight: ${({ theme }) => theme.typography.fontWeight.medium};
   line-height: ${({ theme }) => theme.typography.lineHeight.tight};
   white-space: nowrap;
   transition:
     background ${({ theme }) => theme.transitions.fast},
     border-color ${({ theme }) => theme.transitions.fast},
+    box-shadow ${({ theme }) => theme.transitions.normal},
+    color ${({ theme }) => theme.transitions.fast},
     filter ${({ theme }) => theme.transitions.fast};
 
   ${({ $size = 'md' }) => sizeStyles[$size]}
@@ -85,7 +89,7 @@ export const Button = styled.button<ButtonProps>`
   ${({ $fullWidth }) => $fullWidth && 'width: 100%;'}
 
   &:disabled {
-    opacity: 0.55;
+    opacity: 0.5;
     cursor: not-allowed;
   }
 `;

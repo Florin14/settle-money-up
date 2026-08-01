@@ -25,6 +25,18 @@ export function useGroups() {
   });
 }
 
+export function useGroup(groupId: string) {
+  return useQuery({
+    queryKey: groupKeys.detail(groupId),
+    enabled: !!groupId,
+    queryFn: async (): Promise<Group> => {
+      const { data, error } = await supabase.from('groups').select('*').eq('id', groupId).single();
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
 export type MemberWithProfile = GroupMember & { profile: Profile };
 
 export function useGroupMembers(groupId: string) {
