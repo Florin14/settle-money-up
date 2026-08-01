@@ -116,11 +116,32 @@ export default function AuthPage({ themeButton }: AuthPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{
+    fullName?: string;
+    email?: string;
+    password?: string;
+  }>({});
+
+  function clearFieldError(field: keyof typeof fieldErrors) {
+    setFieldErrors((f) => ({ ...f, [field]: undefined }));
+  }
+
+  function validate(): boolean {
+    const fe: typeof fieldErrors = {};
+    if (mode === 'signup' && !fullName.trim()) fe.fullName = 'Completează numele';
+    if (!email.trim()) fe.email = 'Completează emailul';
+    else if (!/\S+@\S+\.\S+/.test(email)) fe.email = 'Emailul nu pare valid';
+    if (!password) fe.password = 'Completează parola';
+    else if (password.length < 6) fe.password = 'Parola trebuie să aibă cel puțin 6 caractere';
+    setFieldErrors(fe);
+    return Object.keys(fe).length === 0;
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setInfo(null);
+    if (!validate()) return;
     setSubmitting(true);
     try {
       if (mode === 'signin') {
@@ -147,13 +168,16 @@ export default function AuthPage({ themeButton }: AuthPageProps) {
           <Tagline>Split smarter. Settle faster.</Tagline>
         </Brand>
 
-        <Form onSubmit={onSubmit}>
+        <Form onSubmit={onSubmit} noValidate>
           {mode === 'signup' && (
             <Input
               label="Nume complet"
               value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              required
+              error={fieldErrors.fullName}
+              onChange={(e) => {
+                setFullName(e.target.value);
+                clearFieldError('fullName');
+              }}
               autoComplete="name"
             />
           )}
@@ -161,17 +185,22 @@ export default function AuthPage({ themeButton }: AuthPageProps) {
             label="Email"
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
+            error={fieldErrors.email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              clearFieldError('email');
+            }}
             autoComplete="email"
           />
           <Input
             label="Parolă"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={6}
+            error={fieldErrors.password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              clearFieldError('password');
+            }}
             autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
           />
           {error && <Message $error>{error}</Message>}

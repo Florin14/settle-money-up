@@ -9,6 +9,9 @@ import { CATEGORY_OPTIONS, todayISO } from '@/lib/categories';
 import { formatMoney } from '@/lib/money';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
+import { DateField } from '@/components/ui/DateField';
+import { CategoryBubble } from '@/components/ui/CategoryBubble';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Card, CardTitle, BalancePill, MeterTrack, MeterFill } from '@/components/ui/Card';
@@ -138,17 +141,6 @@ const FeedRow = styled.li`
   }
 `;
 
-const IconBubble = styled.span`
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  border-radius: ${({ theme }) => theme.radii.full};
-  background: ${({ theme }) => theme.colors.brand.subtle};
-  color: ${({ theme }) => theme.colors.brand.primary};
-`;
-
 const RowMain = styled.div`
   flex: 1;
   display: flex;
@@ -222,6 +214,14 @@ const Muted = styled.p`
 
 type ParticipantState = Record<string, { checked: boolean; value: string }>;
 
+const PLACEHOLDER_IDEAS = [
+  'ex. Cina la restaurant',
+  'ex. Cazare pentru weekend',
+  'ex. Taxi spre aeroport',
+  'ex. Cumpărături pentru casă',
+  'ex. Biletele de intrare',
+];
+
 function displayName(p: Profile | undefined): string {
   return p?.full_name || p?.email || 'necunoscut';
 }
@@ -255,6 +255,15 @@ export default function GroupDetailPage() {
   const [splitType, setSplitType] = useState<SplitType>('equal');
   const [participants, setParticipants] = useState<ParticipantState>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{
+    description?: string;
+    amount?: string;
+    participants?: string;
+  }>({});
+  const [justSaved, setJustSaved] = useState(false);
+  const [placeholderIdea] = useState(
+    () => PLACEHOLDER_IDEAS[Math.floor(Math.random() * PLACEHOLDER_IDEAS.length)],
+  );
 
   useEffect(() => {
     if (!members) return;
@@ -280,6 +289,15 @@ export default function GroupDetailPage() {
   function onSubmitExpense(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
+
+    const fe: typeof fieldErrors = {};
+    if (!description.trim()) fe.description = 'Completează descrierea';
+    if (!amount.trim()) fe.amount = 'Completează suma';
+    else if (!(Number(amount) > 0)) fe.amount = 'Suma trebuie să fie mai mare decât 0';
+    if (checkedIds.length === 0) fe.participants = 'Alege cel puțin un participant';
+    setFieldErrors(fe);
+    if (Object.keys(fe).length > 0) return;
+
     createExpense.mutate(
       {
         groupId,
@@ -298,6 +316,8 @@ export default function GroupDetailPage() {
         onSuccess: () => {
           setDescription('');
           setAmount('');
+          setJustSaved(true);
+          window.setTimeout(() => setJustSaved(false), 1800);
           setParticipants((prev) => {
             const next: ParticipantState = {};
             for (const [id, p] of Object.entries(prev)) next[id] = { ...p, value: '' };
@@ -316,6 +336,14 @@ export default function GroupDetailPage() {
   function onAddMember(e: FormEvent) {
     e.preventDefault();
     setMemberError(null);
+    if (!memberEmail.trim()) {
+      setMemberError('Completează emailul');
+      return;
+    }
+    if (!/\S+@\S+\.\S+/.test(memberEmail)) {
+      setMemberError('Emailul nu pare valid');
+      return;
+    }
     addMember.mutate(memberEmail, {
       onSuccess: () => setMemberEmail(''),
       onError: (err) => setMemberError(err instanceof Error ? err.message : String(err)),
@@ -352,22 +380,30 @@ export default function GroupDetailPage() {
         <Column>
           <Card $static>
             <CardTitle>Adaugă cheltuială</CardTitle>
-            <FormGrid onSubmit={onSubmitExpense}>
+            <FormGrid onSubmit={onSubmitExpense} noValidate>
               <FieldRow>
                 <Input
                   label="Descriere"
                   value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  required
+                  placeholder={placeholderIdea}
+                  error={fieldErrors.description}
+                  onChange={(e) => {
+                    setDescription(e.target.value);
+                    setFieldErrors((f) => ({ ...f, description: undefined }));
+                  }}
                 />
                 <Input
                   label={`Sumă (${currency})`}
                   type="number"
                   step="0.01"
                   min="0.01"
+                  inputMode="decimal"
                   value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  required
+                  error={fieldErrors.amount}
+                  onChange={(e) => {
+                    setAmount(e.target.value);
+                    setFieldErrors((f) => ({ ...f, amount: undefined }));
+                  }}
                 />
                 <Select
                   label="Categorie"
@@ -380,12 +416,7 @@ export default function GroupDetailPage() {
                     </option>
                   ))}
                 </Select>
-                <Input
-                  label="Data"
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                />
+                <DateField label="Data" value={date} onChange={setDate} />
               </FieldRow>
               <FieldRow>
                 <Select
@@ -417,15 +448,16 @@ export default function GroupDetailPage() {
                     <input
                       type="checkbox"
                       checked={participants[m.user_id]?.checked ?? false}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setFieldErrors((f) => ({ ...f, participants: undefined }));
                         setParticipants((prev) => ({
                           ...prev,
                           [m.user_id]: {
                             checked: e.target.checked,
                             value: prev[m.user_id]?.value ?? '',
                           },
-                        }))
-                      }
+                        }));
+                      }}
                     />
                     <Avatar name={displayName(m.profile)} seed={m.user_id} size={26} />
                     <ParticipantName>{displayName(m.profile)}</ParticipantName>
@@ -455,11 +487,18 @@ export default function GroupDetailPage() {
                 {splitType === 'percentage' && (
                   <Hint>Introdus: {enteredSum.toFixed(2)}% / 100%</Hint>
                 )}
+                {fieldErrors.participants && (
+                  <ErrorText role="alert">{fieldErrors.participants}</ErrorText>
+                )}
               </div>
 
               {formError && <ErrorText role="alert">{formError}</ErrorText>}
               <Button type="submit" disabled={createExpense.isPending}>
-                {createExpense.isPending ? 'Se salvează…' : '+ Adaugă cheltuiala'}
+                {createExpense.isPending
+                  ? 'Se salvează…'
+                  : justSaved
+                    ? 'Adăugat ✓'
+                    : 'Adaugă cheltuiala'}
               </Button>
             </FormGrid>
           </Card>
@@ -469,14 +508,16 @@ export default function GroupDetailPage() {
             {expensesLoading ? (
               <Muted>Se încarcă…</Muted>
             ) : (expenses ?? []).length === 0 ? (
-              <Muted>Nicio cheltuială încă.</Muted>
+              <EmptyState
+                icon="shopping"
+                title="Nicio cheltuială încă"
+                hint="Adaugă prima cheltuială a grupului din formularul de mai sus."
+              />
             ) : (
               <List>
                 {(expenses ?? []).map((e) => (
                   <FeedRow key={e.id}>
-                    <IconBubble aria-hidden>
-                      <Icon name={e.category} size={19} />
-                    </IconBubble>
+                    <CategoryBubble category={e.category} />
                     <RowMain>
                       <RowTitle>{e.description}</RowTitle>
                       <RowMeta>
@@ -511,7 +552,12 @@ export default function GroupDetailPage() {
             {!settlement ? (
               <Muted>Se calculează…</Muted>
             ) : settlement.transactions.length === 0 ? (
-              <Muted>Totul e decontat.</Muted>
+              <EmptyState
+                icon="scale"
+                title="Totul e decontat"
+                hint="Nimeni nu datorează nimic. Echilibru perfect."
+                positive
+              />
             ) : (
               <List>
                 {settlement.transactions.map((t, i) => (
@@ -603,15 +649,17 @@ export default function GroupDetailPage() {
               ))}
             </List>
             {isOwner && (
-              <FormGrid onSubmit={onAddMember} style={{ marginTop: '1rem' }}>
+              <FormGrid onSubmit={onAddMember} style={{ marginTop: '1rem' }} noValidate>
                 <Input
                   label="Adaugă membru după email"
                   type="email"
                   value={memberEmail}
-                  onChange={(e) => setMemberEmail(e.target.value)}
-                  required
+                  error={memberError ?? undefined}
+                  onChange={(e) => {
+                    setMemberEmail(e.target.value);
+                    setMemberError(null);
+                  }}
                 />
-                {memberError && <ErrorText role="alert">{memberError}</ErrorText>}
                 <Button type="submit" $variant="secondary" disabled={addMember.isPending}>
                   {addMember.isPending ? 'Se adaugă…' : '+ Adaugă membru'}
                 </Button>

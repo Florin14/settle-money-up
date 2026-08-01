@@ -200,7 +200,8 @@ export function useCreateGroupExpense() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: expenseKeys.byGroup(variables.groupId) });
       queryClient.invalidateQueries({ queryKey: groupKeys.detail(variables.groupId) });
-      queryClient.invalidateQueries({ queryKey: ['balances', variables.groupId] });
+      // prefix match: refreshes both the group settlement and the "my events" list
+      queryClient.invalidateQueries({ queryKey: ['balances'] });
     },
   });
 }

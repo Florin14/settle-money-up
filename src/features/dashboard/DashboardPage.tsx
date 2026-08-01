@@ -1,17 +1,51 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
-import { usePersonalExpenses, useCreatePersonalExpense, useDeleteExpense } from '@/hooks/useExpenses';
+import {
+  usePersonalExpenses,
+  useCreatePersonalExpense,
+  useCreateGroupExpense,
+  useDeleteExpense,
+} from '@/hooks/useExpenses';
 import { useMyEventBalances } from '@/hooks/useSettlement';
-import { useGroups } from '@/hooks/useGroups';
+import { useGroups, useGroupMembers } from '@/hooks/useGroups';
+import { useAuth } from '@/context/AuthContext';
 import { CATEGORY_LABELS, CATEGORY_OPTIONS, todayISO } from '@/lib/categories';
 import { formatMoney } from '@/lib/money';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
+import { DateField } from '@/components/ui/DateField';
+import { CategoryBubble } from '@/components/ui/CategoryBubble';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Card, CardTitle, BalancePill, MeterTrack, MeterFill } from '@/components/ui/Card';
 import type { ExpenseCategory } from '@/types/database.types';
+
+/* ---------- Greeting ---------- */
+
+const Greeting = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: ${({ theme }) => theme.spacing.xs};
+`;
+
+const Hello = styled.h2`
+  font-size: ${({ theme }) => theme.typography.fontSize.xxl};
+`;
+
+const HelloSub = styled.p`
+  font-size: ${({ theme }) => theme.typography.fontSize.sm};
+  color: ${({ theme }) => theme.colors.text.secondary};
+`;
+
+const TrendLine = styled.p<{ $good?: boolean }>`
+  font-size: ${({ theme }) => theme.typography.fontSize.sm};
+  font-weight: ${({ theme }) => theme.typography.fontWeight.medium};
+  color: ${({ theme, $good }) =>
+    $good ? theme.colors.positive.text : theme.colors.negative.text};
+`;
 
 /* ---------- Bento layout ---------- */
 
@@ -100,7 +134,16 @@ const FormGrid = styled.form`
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
   gap: ${({ theme }) => theme.spacing.sm};
+  /* top-aligned: labels are equal height so inputs line up, and an error
+     message only grows its own cell downward without shifting the others */
   align-items: start;
+
+  /* the submit button matches the input height and is pushed below an
+     invisible "label" so it lines up with the fields */
+  button[type='submit'] {
+    height: 2.5rem;
+    margin-top: calc(0.75rem * 1.55 + 4px);
+  }
 `;
 
 /* ---------- Lists ---------- */
@@ -252,14 +295,34 @@ const CURRENCIES = [
   { code: 'RON', label: 'lei Românești' },
 ] as const;
 
+const PLACEHOLDER_IDEAS = [
+  'ex. Cafea cu lapte',
+  'ex. Pizza cu gașca',
+  'ex. Abonament la metrou',
+  'ex. Cumpărături Lidl',
+  'ex. Bilete la film',
+  'ex. Plin de benzină',
+];
+
+function greetingForHour(h: number): string {
+  if (h < 5) return 'Noapte bună';
+  if (h < 12) return 'Bună dimineața';
+  if (h < 18) return 'Salut';
+  return 'Bună seara';
+}
+
 export default function DashboardPage() {
+  const { user } = useAuth();
   const [monthOffset, setMonthOffset] = useState(0);
   const [viewMode, setViewMode] = useState<'monthly' | 'events'>('monthly');
   const month = monthStart(monthOffset);
+  const prevMonth = monthStart(monthOffset - 1);
   const { data: expenses, isLoading } = usePersonalExpenses(month);
+  const { data: prevExpenses } = usePersonalExpenses(prevMonth);
   const { data: groups } = useGroups();
   const { data: eventBalances } = useMyEventBalances();
   const createExpense = useCreatePersonalExpense();
+  const createGroupExpense = useCreateGroupExpense();
   const deleteExpense = useDeleteExpense();
 
   const [description, setDescription] = useState('');
@@ -267,6 +330,10 @@ export default function DashboardPage() {
   const [currency, setCurrency] = useState<string>('RON');
   const [category, setCategory] = useState<ExpenseCategory>('food');
   const [date, setDate] = useState(todayISO());
+  /** '' = personal expense; a group id = quick-add to that group, split equally */
+  const [targetGroupId, setTargetGroupId] = useState('');
+  const { data: targetMembers } = useGroupMembers(targetGroupId);
+  const targetGroup = (groups ?? []).find((g) => g.id === targetGroupId);
 
   const monthLabel = new Intl.DateTimeFormat('ro-RO', { month: 'long', year: 'numeric' }).format(
     new Date(`${month}T00:00:00`),
@@ -300,20 +367,84 @@ export default function DashboardPage() {
     return totalsByCurrency.find(([c]) => c === cur)?.[1] ?? 0;
   }
 
+  /* month-over-month, only within the primary currency (no cross-currency math) */
+  const prevTotal = (prevExpenses ?? [])
+    .filter((e) => e.currency === primaryCurrency)
+    .reduce((acc, e) => acc + e.amount, 0);
+  const currentTotal = currencyTotal(primaryCurrency);
+  const trendPct =
+    prevTotal > 0 && currentTotal > 0
+      ? Math.round(((currentTotal - prevTotal) / prevTotal) * 100)
+      : null;
+  const prevMonthName = new Intl.DateTimeFormat('ro-RO', { month: 'long' }).format(
+    new Date(`${prevMonth}T00:00:00`),
+  );
+
+  const [fieldErrors, setFieldErrors] = useState<{ description?: string; amount?: string }>({});
+  const [justSaved, setJustSaved] = useState(false);
+  const [placeholderIdea] = useState(
+    () => PLACEHOLDER_IDEAS[Math.floor(Math.random() * PLACEHOLDER_IDEAS.length)],
+  );
+
+  const firstName =
+    (user?.user_metadata?.full_name as string | undefined)?.trim().split(/\s+/)[0] ||
+    user?.email?.split('@')[0] ||
+    '';
+
   function onSubmit(e: FormEvent) {
     e.preventDefault();
-    createExpense.mutate(
-      { description, amount: Number(amount), category, currency, expenseDate: date },
-      {
-        onSuccess: () => {
-          setDescription('');
-          setAmount('');
+
+    const fe: typeof fieldErrors = {};
+    if (!description.trim()) fe.description = 'Completează descrierea';
+    if (!amount.trim()) fe.amount = 'Completează suma';
+    else if (!(Number(amount) > 0)) fe.amount = 'Suma trebuie să fie mai mare decât 0';
+    setFieldErrors(fe);
+    if (Object.keys(fe).length > 0) return;
+
+    const reset = () => {
+      setDescription('');
+      setAmount('');
+      setJustSaved(true);
+      window.setTimeout(() => setJustSaved(false), 1800);
+    };
+
+    if (targetGroupId && user) {
+      // quick-add to a group: paid by me, split equally between all members
+      createGroupExpense.mutate(
+        {
+          groupId: targetGroupId,
+          description,
+          amount: Number(amount),
+          category,
+          splitType: 'equal',
+          payerId: user.id,
+          expenseDate: date,
+          participants: (targetMembers ?? []).map((m) => ({ userId: m.user_id })),
         },
-      },
-    );
+        { onSuccess: reset },
+      );
+    } else {
+      createExpense.mutate(
+        { description, amount: Number(amount), category, currency, expenseDate: date },
+        { onSuccess: reset },
+      );
+    }
   }
 
+  const submitting = createExpense.isPending || createGroupExpense.isPending;
+  const submitError = createExpense.error ?? createGroupExpense.error;
+  const waitingForMembers = !!targetGroupId && !targetMembers;
+
   return (
+    <>
+      <Greeting>
+        <Hello>
+          {greetingForHour(new Date().getHours())}
+          {firstName ? `, ${firstName}` : ''}
+        </Hello>
+        <HelloSub>Iată cum stau cheltuielile tale.</HelloSub>
+      </Greeting>
+
     <Bento>
       <HeroTile $static>
         <CardTitle>Total cheltuit</CardTitle>
@@ -327,6 +458,13 @@ export default function DashboardPage() {
               </HeroNumber>
             ))
           )}
+          {trendPct !== null && trendPct !== 0 && (
+            <TrendLine $good={trendPct < 0}>
+              cu {Math.abs(trendPct)}% mai {trendPct < 0 ? 'puțin' : 'mult'} decât în{' '}
+              {prevMonthName}
+            </TrendLine>
+          )}
+          {trendPct === 0 && <TrendLine $good>la fel ca în {prevMonthName}</TrendLine>}
         </div>
         <MonthNav>
           <Button
@@ -368,12 +506,16 @@ export default function DashboardPage() {
 
       <FormCard $static>
         <CardTitle>Adaugă cheltuială</CardTitle>
-        <FormGrid onSubmit={onSubmit}>
+        <FormGrid onSubmit={onSubmit} noValidate>
           <Input
             label="Descriere"
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            required
+            placeholder={placeholderIdea}
+            error={fieldErrors.description}
+            onChange={(e) => {
+              setDescription(e.target.value);
+              setFieldErrors((f) => ({ ...f, description: undefined }));
+            }}
           />
           <Input
             label="Sumă"
@@ -382,13 +524,37 @@ export default function DashboardPage() {
             min="0.01"
             inputMode="decimal"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            required
+            error={fieldErrors.amount}
+            onChange={(e) => {
+              setAmount(e.target.value);
+              setFieldErrors((f) => ({ ...f, amount: undefined }));
+            }}
           />
-          <Select label="Monedă" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+          <Select
+            label="Monedă"
+            value={targetGroup ? targetGroup.currency : currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            disabled={!!targetGroup}
+            title={targetGroup ? 'Moneda e stabilită de grup' : undefined}
+          >
             {CURRENCIES.map((c) => (
               <option key={c.code} value={c.code}>
                 {c.label}
+              </option>
+            ))}
+            {targetGroup && !CURRENCIES.some((c) => c.code === targetGroup.currency) && (
+              <option value={targetGroup.currency}>{targetGroup.currency}</option>
+            )}
+          </Select>
+          <Select
+            label="Grup (opțional)"
+            value={targetGroupId}
+            onChange={(e) => setTargetGroupId(e.target.value)}
+          >
+            <option value="">Personală (fără grup)</option>
+            {(groups ?? []).map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
               </option>
             ))}
           </Select>
@@ -403,14 +569,18 @@ export default function DashboardPage() {
               </option>
             ))}
           </Select>
-          <Input label="Data" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          <Button type="submit" disabled={createExpense.isPending} style={{ alignSelf: 'stretch' }}>
-            {createExpense.isPending ? 'Se salvează…' : '+ Adaugă'}
+          <DateField label="Data" value={date} onChange={setDate} />
+          <Button type="submit" disabled={submitting || waitingForMembers}>
+            {submitting ? 'Se salvează…' : justSaved ? 'Adăugat ✓' : 'Adaugă'}
           </Button>
         </FormGrid>
-        {createExpense.isError && (
-          <Muted role="alert">Eroare: {(createExpense.error as Error).message}</Muted>
+        {targetGroup && (
+          <Muted style={{ marginTop: '0.75rem', fontSize: '0.8rem' }}>
+            Se adaugă în „{targetGroup.name}", plătită de tine și împărțită egal între membri.
+            Pentru împărțiri personalizate folosește pagina grupului.
+          </Muted>
         )}
+        {submitError && <Muted role="alert">Eroare: {(submitError as Error).message}</Muted>}
       </FormCard>
 
       <CatsCard $static>
@@ -469,14 +639,16 @@ export default function DashboardPage() {
           isLoading ? (
             <Muted>Se încarcă…</Muted>
           ) : (expenses ?? []).length === 0 ? (
-            <Muted>Nicio cheltuială în luna asta. Adaugă prima mai sus.</Muted>
+            <EmptyState
+              icon="other"
+              title="Nimic pe luna asta"
+              hint="Prima cheltuială e la un formular distanță. Sau poate chiar n-ai cheltuit nimic — respect."
+            />
           ) : (
             <List>
               {(expenses ?? []).map((e) => (
                 <FeedRow key={e.id}>
-                  <IconBubble aria-hidden>
-                    <Icon name={e.category} size={19} />
-                  </IconBubble>
+                  <CategoryBubble category={e.category} />
                   <RowMain>
                     <RowTitle>{e.description}</RowTitle>
                     <RowMeta>
@@ -500,9 +672,11 @@ export default function DashboardPage() {
             </List>
           )
         ) : (eventBalances ?? []).length === 0 ? (
-          <Muted>
-            Niciun eveniment încă. Creează un grup din pagina <Link to="/groups">Grupuri</Link>.
-          </Muted>
+          <EmptyState
+            icon="flag"
+            title="Niciun eveniment încă"
+            hint="O vacanță, o chirie împărțită, o cină cu prietenii — creează un grup din pagina Grupuri."
+          />
         ) : (
           <List>
             {(eventBalances ?? []).map((b) => {
@@ -533,5 +707,6 @@ export default function DashboardPage() {
         )}
       </ListCard>
     </Bento>
+    </>
   );
 }

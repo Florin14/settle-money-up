@@ -28,6 +28,7 @@ export type IconName =
   | 'users'
   | 'flag'
   | 'scale'
+  | 'calendar'
   | 'signOut';
 
 const paths: Record<IconName, ReactNode> = {
@@ -156,6 +157,14 @@ const paths: Record<IconName, ReactNode> = {
       <path d="M5 7h14" />
       <path d="m5 7-2.2 5a2.6 2.6 0 0 0 4.4 0L5 7Z" />
       <path d="m19 7-2.2 5a2.6 2.6 0 0 0 4.4 0L19 7Z" />
+    </>
+  ),
+  calendar: (
+    <>
+      <rect x="4" y="5.5" width="16" height="14.5" rx="2" />
+      <path d="M4 10h16" />
+      <path d="M8.5 3.5v3" />
+      <path d="M15.5 3.5v3" />
     </>
   ),
   signOut: (

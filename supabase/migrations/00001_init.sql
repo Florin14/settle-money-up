@@ -282,9 +282,12 @@ create policy "profiles_update" on public.profiles
   with check (id = (select auth.uid()));
 
 -- GROUPS
+-- NOTE: the creator must be select-visible directly (not only via membership):
+-- INSERT ... RETURNING evaluates the SELECT policy BEFORE the after-insert
+-- trigger has added the creator to group_members.
 create policy "groups_select" on public.groups
   for select to authenticated
-  using (public.is_group_member(id));
+  using (created_by = (select auth.uid()) or public.is_group_member(id));
 
 create policy "groups_insert" on public.groups
   for insert to authenticated

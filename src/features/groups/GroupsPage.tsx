@@ -6,12 +6,19 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Card, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 const FormRow = styled.form`
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: ${({ theme }) => theme.spacing.sm};
+  /* top-aligned so an error under one field never shifts its neighbours */
   align-items: start;
+
+  button[type='submit'] {
+    height: 2.5rem;
+    margin-top: calc(0.75rem * 1.55 + 4px);
+  }
 `;
 
 const GroupGrid = styled.ul`
@@ -92,9 +99,14 @@ export default function GroupsPage() {
   const createGroup = useCreateGroup();
   const [name, setName] = useState('');
   const [currency, setCurrency] = useState('EUR');
+  const [nameError, setNameError] = useState<string | undefined>();
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!name.trim()) {
+      setNameError('Dă-i un nume grupului');
+      return;
+    }
     createGroup.mutate({ name, currency }, { onSuccess: () => setName('') });
   }
 
@@ -102,21 +114,22 @@ export default function GroupsPage() {
     <>
       <Card $static>
         <CardTitle>Creează un grup</CardTitle>
-        <FormRow onSubmit={onSubmit}>
+        <FormRow onSubmit={onSubmit} noValidate>
           <Input
             label='Nume grup (ex. "Vacanță la Roma")'
             value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
+            error={nameError}
+            onChange={(e) => {
+              setName(e.target.value);
+              setNameError(undefined);
+            }}
           />
           <Select label="Monedă" value={currency} onChange={(e) => setCurrency(e.target.value)}>
             <option value="EUR">EUR</option>
             <option value="RON">RON</option>
-            <option value="USD">USD</option>
-            <option value="GBP">GBP</option>
           </Select>
           <Button type="submit" disabled={createGroup.isPending}>
-            {createGroup.isPending ? 'Se creează…' : '+ Creează grup'}
+            {createGroup.isPending ? 'Se creează…' : 'Creează grup'}
           </Button>
         </FormRow>
         {createGroup.isError && (
@@ -129,7 +142,11 @@ export default function GroupsPage() {
         {isLoading ? (
           <Muted>Se încarcă…</Muted>
         ) : (groups ?? []).length === 0 ? (
-          <Muted>Nu ești în niciun grup încă. Creează unul mai sus.</Muted>
+          <EmptyState
+            icon="users"
+            title="Niciun grup încă"
+            hint="O vacanță, o chirie împărțită, o ieșire cu prietenii — primul grup e la un click distanță."
+          />
         ) : (
           <GroupGrid>
             {(groups ?? []).map((g) => (
