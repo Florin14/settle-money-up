@@ -241,6 +241,27 @@ export interface Database {
           total_paid: number;
           total_owed: number;
           net_balance: number;
+          currency: string;
+        };
+        Relationships: [];
+      };
+      my_expenses: {
+        Row: {
+          id: string;
+          group_id: string | null;
+          group_name: string | null;
+          payer_id: string;
+          created_by: string;
+          description: string;
+          category: ExpenseCategory;
+          currency: string;
+          split_type: SplitType;
+          expense_date: string;
+          notes: string | null;
+          created_at: string;
+          total_amount: number;
+          my_share: number;
+          paid_by_me: boolean;
         };
         Relationships: [];
       };
@@ -266,6 +287,7 @@ export interface Database {
           p_expense_date: string | null;
           p_payer_id: string;
           p_splits: Json;
+          p_currency?: string | null;
         };
         Returns: Database['public']['Tables']['expenses']['Row'];
       };
@@ -302,5 +324,6 @@ export type GroupMember = Database['public']['Tables']['group_members']['Row'];
 export type Expense = Database['public']['Tables']['expenses']['Row'];
 export type ExpenseSplit = Database['public']['Tables']['expense_splits']['Row'];
 export type GroupBalance = Database['public']['Views']['group_balances']['Row'];
+export type MyExpense = Database['public']['Views']['my_expenses']['Row'];
 export type PersonalMonthlySummary =
   Database['public']['Views']['personal_monthly_summary']['Row'];

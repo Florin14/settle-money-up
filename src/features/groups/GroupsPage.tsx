@@ -124,7 +124,12 @@ export default function GroupsPage() {
               setNameError(undefined);
             }}
           />
-          <Select label="Monedă" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+          <Select
+            label="Monedă implicită"
+            title="Doar moneda propusă implicit — fiecare cheltuială își poate alege moneda ei"
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+          >
             <option value="EUR">EUR</option>
             <option value="RON">RON</option>
           </Select>

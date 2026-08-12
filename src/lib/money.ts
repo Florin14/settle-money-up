@@ -22,3 +22,15 @@ export function formatMoney(amount: number, currency: string, locale?: string): 
 export function formatCents(cents: number, currency: string, locale?: string): string {
   return formatMoney(fromCents(cents), currency, locale);
 }
+
+export const CURRENCIES = [
+  { code: 'RON', label: 'lei Românești' },
+  { code: 'EUR', label: '€ Euro' },
+] as const;
+
+/** The selectable currencies, always including `extra` (e.g. a group's default). */
+export function currencyOptions(extra?: string | null): { code: string; label: string }[] {
+  const base: { code: string; label: string }[] = [...CURRENCIES];
+  if (extra && !base.some((c) => c.code === extra)) base.push({ code: extra, label: extra });
+  return base;
+}
