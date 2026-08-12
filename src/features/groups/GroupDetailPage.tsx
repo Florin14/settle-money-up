@@ -6,7 +6,7 @@ import { useGroup, useGroupMembers, useAddMemberByEmail } from '@/hooks/useGroup
 import { useGroupExpenses, useCreateGroupExpense, useDeleteExpense } from '@/hooks/useExpenses';
 import { useGroupSettlement } from '@/hooks/useSettlement';
 import { CATEGORY_OPTIONS, todayISO } from '@/lib/categories';
-import { formatMoney } from '@/lib/money';
+import { currencyOptions, formatMoney } from '@/lib/money';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { DateField } from '@/components/ui/DateField';
@@ -249,6 +249,9 @@ export default function GroupDetailPage() {
   /* --- add-expense form state --- */
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
+  /** '' until the user picks one; falls back to the group's default currency */
+  const [expenseCurrency, setExpenseCurrency] = useState('');
+  const activeCurrency = expenseCurrency || currency;
   const [category, setCategory] = useState<ExpenseCategory>('food');
   const [date, setDate] = useState(todayISO());
   const [payerId, setPayerId] = useState('');
@@ -306,6 +309,7 @@ export default function GroupDetailPage() {
         category,
         splitType,
         payerId,
+        currency: activeCurrency,
         expenseDate: date,
         participants: checkedIds.map((id) => ({
           userId: id,
@@ -350,11 +354,19 @@ export default function GroupDetailPage() {
     });
   }
 
-  const maxTransaction = Math.max(...(settlement?.transactions.map((t) => t.amount) ?? [0]), 0);
-  const maxAbsBalance = Math.max(
-    ...(settlement?.balances.map((b) => Math.abs(b.net_balance)) ?? [0]),
-    0,
-  );
+  /* meters compare within one currency only — RON bars vs EUR bars make no sense */
+  const maxTransactionByCur = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of settlement?.transactions ?? [])
+      m.set(t.currency, Math.max(m.get(t.currency) ?? 0, t.amount));
+    return m;
+  }, [settlement]);
+  const maxAbsBalanceByCur = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const b of settlement?.balances ?? [])
+      m.set(b.currency, Math.max(m.get(b.currency) ?? 0, Math.abs(b.net_balance)));
+    return m;
+  }, [settlement]);
 
   return (
     <>
@@ -393,7 +405,7 @@ export default function GroupDetailPage() {
                   }}
                 />
                 <Input
-                  label={`Sumă (${currency})`}
+                  label="Sumă"
                   type="number"
                   step="0.01"
                   min="0.01"
@@ -405,6 +417,17 @@ export default function GroupDetailPage() {
                     setFieldErrors((f) => ({ ...f, amount: undefined }));
                   }}
                 />
+                <Select
+                  label="Monedă"
+                  value={activeCurrency}
+                  onChange={(e) => setExpenseCurrency(e.target.value)}
+                >
+                  {currencyOptions(group?.currency).map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.label}
+                    </option>
+                  ))}
+                </Select>
                 <Select
                   label="Categorie"
                   value={category}
@@ -481,7 +504,8 @@ export default function GroupDetailPage() {
                 ))}
                 {splitType === 'amount' && (
                   <Hint>
-                    Introdus: {enteredSum.toFixed(2)} / {Number(amount || 0).toFixed(2)} {currency}
+                    Introdus: {enteredSum.toFixed(2)} / {Number(amount || 0).toFixed(2)}{' '}
+                    {activeCurrency}
                   </Hint>
                 )}
                 {splitType === 'percentage' && (
@@ -579,12 +603,16 @@ export default function GroupDetailPage() {
                       />
                       <span>{displayName(profileById.get(t.toUserId))}</span>
                       <SettleAmount data-money>
-                        {formatMoney(t.amount, currency, 'ro-RO')}
+                        {formatMoney(t.amount, t.currency, 'ro-RO')}
                       </SettleAmount>
                     </SettleHead>
                     <MeterTrack>
                       <MeterFill
-                        $pct={maxTransaction > 0 ? (t.amount / maxTransaction) * 100 : 0}
+                        $pct={
+                          (maxTransactionByCur.get(t.currency) ?? 0) > 0
+                            ? (t.amount / maxTransactionByCur.get(t.currency)!) * 100
+                            : 0
+                        }
                       />
                     </MeterTrack>
                   </SettleItem>
@@ -600,7 +628,7 @@ export default function GroupDetailPage() {
             ) : (
               <List>
                 {settlement.balances.map((b) => (
-                  <FeedRow key={b.user_id} as="li" style={{ flexWrap: 'wrap' }}>
+                  <FeedRow key={`${b.user_id}|${b.currency}`} as="li" style={{ flexWrap: 'wrap' }}>
                     <Avatar
                       name={displayName(profileById.get(b.user_id))}
                       seed={b.user_id}
@@ -609,20 +637,22 @@ export default function GroupDetailPage() {
                     <RowMain>
                       <RowTitle>{displayName(profileById.get(b.user_id))}</RowTitle>
                       <RowMeta>
-                        a plătit {formatMoney(b.total_paid, currency, 'ro-RO')} · consumă{' '}
-                        {formatMoney(b.total_owed, currency, 'ro-RO')}
+                        a plătit {formatMoney(b.total_paid, b.currency, 'ro-RO')} · consumă{' '}
+                        {formatMoney(b.total_owed, b.currency, 'ro-RO')}
                       </RowMeta>
                     </RowMain>
                     <BalancePill $negative={b.net_balance < 0} data-money>
                       {b.net_balance > 0 ? '+' : ''}
-                      {formatMoney(b.net_balance, currency, 'ro-RO')}
+                      {formatMoney(b.net_balance, b.currency, 'ro-RO')}
                     </BalancePill>
                     <div style={{ width: '100%' }}>
                       <MeterTrack>
                         <MeterFill
                           $pct={
-                            maxAbsBalance > 0
-                              ? (Math.abs(b.net_balance) / maxAbsBalance) * 100
+                            (maxAbsBalanceByCur.get(b.currency) ?? 0) > 0
+                              ? (Math.abs(b.net_balance) /
+                                  maxAbsBalanceByCur.get(b.currency)!) *
+                                100
                               : 0
                           }
                           $negative={b.net_balance < 0}

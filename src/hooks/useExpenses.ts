@@ -6,6 +6,7 @@ import type {
   Expense,
   ExpenseCategory,
   ExpenseSplit,
+  MyExpense,
   PersonalMonthlySummary,
   Profile,
   SplitType,
@@ -15,8 +16,46 @@ import { groupKeys } from './useGroups';
 export const expenseKeys = {
   personal: (month?: string) => ['expenses', 'personal', month ?? 'all'] as const,
   personalSummary: ['expenses', 'personal', 'summary'] as const,
+  my: (month?: string) => ['expenses', 'my', month ?? 'all'] as const,
   byGroup: (groupId: string) => ['expenses', 'group', groupId] as const,
 };
+
+// ---------------------------------------------------------------------------
+// Unified feed: personal expenses + my share of every group expense
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads the my_expenses view: personal expenses (my_share = full amount) plus
+ * group expenses I participate in (my_share = my split, with the group name).
+ * @param month first day of the month, 'YYYY-MM-01'; omit for full history
+ */
+export function useMyExpenses(month?: string) {
+  const { user } = useAuth();
+
+  return useQuery({
+    queryKey: expenseKeys.my(month),
+    enabled: !!user,
+    queryFn: async (): Promise<MyExpense[]> => {
+      let query = supabase
+        .from('my_expenses')
+        .select('*')
+        .order('expense_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (month) {
+        const start = new Date(`${month}T00:00:00Z`);
+        const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+        query = query
+          .gte('expense_date', start.toISOString().slice(0, 10))
+          .lt('expense_date', end.toISOString().slice(0, 10));
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data;
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Personal expenses
@@ -106,6 +145,7 @@ export function useCreatePersonalExpense() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses', 'personal'] });
+      queryClient.invalidateQueries({ queryKey: ['expenses', 'my'] });
     },
   });
 }
@@ -122,10 +162,11 @@ export function useDeleteExpense() {
     onSuccess: (_data, expense) => {
       if (expense.group_id) {
         queryClient.invalidateQueries({ queryKey: expenseKeys.byGroup(expense.group_id) });
-        queryClient.invalidateQueries({ queryKey: ['balances', expense.group_id] });
+        queryClient.invalidateQueries({ queryKey: ['balances'] });
       } else {
         queryClient.invalidateQueries({ queryKey: ['expenses', 'personal'] });
       }
+      queryClient.invalidateQueries({ queryKey: ['expenses', 'my'] });
     },
   });
 }
@@ -166,6 +207,8 @@ export interface CreateGroupExpenseInput {
   /** Who participated and (for amount/percentage splits) their share. */
   participants: SplitInput[];
   expenseDate?: string;
+  /** Omit to fall back to the group's default currency. */
+  currency?: string;
 }
 
 /**
@@ -188,6 +231,7 @@ export function useCreateGroupExpense() {
         p_split_type: input.splitType,
         p_expense_date: input.expenseDate ?? null,
         p_payer_id: input.payerId,
+        p_currency: input.currency ?? null,
         p_splits: splits.map((s) => ({
           user_id: s.userId,
           amount: s.amount,
@@ -200,6 +244,7 @@ export function useCreateGroupExpense() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: expenseKeys.byGroup(variables.groupId) });
       queryClient.invalidateQueries({ queryKey: groupKeys.detail(variables.groupId) });
+      queryClient.invalidateQueries({ queryKey: ['expenses', 'my'] });
       // prefix match: refreshes both the group settlement and the "my events" list
       queryClient.invalidateQueries({ queryKey: ['balances'] });
     },

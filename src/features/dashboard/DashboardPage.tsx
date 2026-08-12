@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
 import {
-  usePersonalExpenses,
+  useMyExpenses,
   useCreatePersonalExpense,
   useCreateGroupExpense,
   useDeleteExpense,
@@ -11,7 +11,7 @@ import { useMyEventBalances } from '@/hooks/useSettlement';
 import { useGroups, useGroupMembers } from '@/hooks/useGroups';
 import { useAuth } from '@/context/AuthContext';
 import { CATEGORY_LABELS, CATEGORY_OPTIONS, todayISO } from '@/lib/categories';
-import { formatMoney } from '@/lib/money';
+import { currencyOptions, formatMoney } from '@/lib/money';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { DateField } from '@/components/ui/DateField';
@@ -20,15 +20,27 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Card, CardTitle, BalancePill, MeterTrack, MeterFill } from '@/components/ui/Card';
-import type { ExpenseCategory } from '@/types/database.types';
+import type { ExpenseCategory, MyExpense } from '@/types/database.types';
 
 /* ---------- Greeting ---------- */
+
+const TopRow = styled.div`
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: ${({ theme }) => theme.spacing.md};
+  flex-wrap: wrap;
+  margin-bottom: ${({ theme }) => theme.spacing.xs};
+`;
+
+const ScopeBox = styled.div`
+  min-width: 220px;
+`;
 
 const Greeting = styled.div`
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-bottom: ${({ theme }) => theme.spacing.xs};
 `;
 
 const Hello = styled.h2`
@@ -265,6 +277,25 @@ const Amount = styled.span`
   color: ${({ theme }) => theme.colors.text.heading};
 `;
 
+const GroupChip = styled(Link)`
+  color: ${({ theme }) => theme.colors.brand.primary};
+  font-size: inherit;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
+const AmountCol = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+`;
+
+const SectionTitle = styled(CardTitle)`
+  margin-top: ${({ theme }) => theme.spacing.md};
+`;
+
 const CatRow = styled.li`
   display: flex;
   flex-direction: column;
@@ -290,11 +321,6 @@ function monthStart(offsetFromNow: number): string {
   return `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
-const CURRENCIES = [
-  { code: 'EUR', label: '€ Euro' },
-  { code: 'RON', label: 'lei Românești' },
-] as const;
-
 const PLACEHOLDER_IDEAS = [
   'ex. Cafea cu lapte',
   'ex. Pizza cu gașca',
@@ -303,6 +329,14 @@ const PLACEHOLDER_IDEAS = [
   'ex. Bilete la film',
   'ex. Plin de benzină',
 ];
+
+/** scope: 'all' | 'personal' | a group id */
+function filterByScope(list: MyExpense[] | undefined, scope: string): MyExpense[] {
+  if (!list) return [];
+  if (scope === 'all') return list;
+  if (scope === 'personal') return list.filter((e) => e.group_id === null);
+  return list.filter((e) => e.group_id === scope);
+}
 
 function greetingForHour(h: number): string {
   if (h < 5) return 'Noapte bună';
@@ -317,9 +351,17 @@ export default function DashboardPage() {
   const [viewMode, setViewMode] = useState<'monthly' | 'events'>('monthly');
   const month = monthStart(monthOffset);
   const prevMonth = monthStart(monthOffset - 1);
-  const { data: expenses, isLoading } = usePersonalExpenses(month);
-  const { data: prevExpenses } = usePersonalExpenses(prevMonth);
+  /** 'all' | 'personal' | a group id — filters the whole dashboard */
+  const [scope, setScope] = useState<string>('all');
+  const { data: allExpenses, isLoading } = useMyExpenses(month);
+  const { data: allPrevExpenses } = useMyExpenses(prevMonth);
   const { data: groups } = useGroups();
+
+  const expenses = useMemo(() => filterByScope(allExpenses, scope), [allExpenses, scope]);
+  const prevExpenses = useMemo(
+    () => filterByScope(allPrevExpenses, scope),
+    [allPrevExpenses, scope],
+  );
   const { data: eventBalances } = useMyEventBalances();
   const createExpense = useCreatePersonalExpense();
   const createGroupExpense = useCreateGroupExpense();
@@ -339,10 +381,11 @@ export default function DashboardPage() {
     new Date(`${month}T00:00:00`),
   );
 
-  /* Mixed-currency months are summed per currency — never across currencies. */
+  /* Sums use my_share: a group expense counts only with YOUR part, not the
+     full amount someone paid. Mixed currencies are summed per currency. */
   const totalsByCurrency = useMemo(() => {
     const m = new Map<string, number>();
-    for (const e of expenses ?? []) m.set(e.currency, (m.get(e.currency) ?? 0) + e.amount);
+    for (const e of expenses) m.set(e.currency, (m.get(e.currency) ?? 0) + e.my_share);
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [expenses]);
 
@@ -351,26 +394,53 @@ export default function DashboardPage() {
 
   const byCategory = useMemo(() => {
     const totals = new Map<string, { category: ExpenseCategory; currency: string; sum: number }>();
-    for (const e of expenses ?? []) {
+    for (const e of expenses) {
       const key = `${e.category}|${e.currency}`;
       const entry = totals.get(key) ?? { category: e.category, currency: e.currency, sum: 0 };
-      entry.sum += e.amount;
+      entry.sum += e.my_share;
       totals.set(key, entry);
     }
     return [...totals.values()].sort((a, b) => b.sum - a.sum);
   }, [expenses]);
 
+  /* This month's spending per group (your share), regardless of scope filter. */
+  const byGroup = useMemo(() => {
+    const totals = new Map<
+      string,
+      { groupId: string; name: string; currency: string; sum: number }
+    >();
+    for (const e of allExpenses ?? []) {
+      if (!e.group_id) continue;
+      const key = `${e.group_id}|${e.currency}`;
+      const entry = totals.get(key) ?? {
+        groupId: e.group_id,
+        name: e.group_name ?? 'Grup',
+        currency: e.currency,
+        sum: 0,
+      };
+      entry.sum += e.my_share;
+      totals.set(key, entry);
+    }
+    return [...totals.values()].sort((a, b) => b.sum - a.sum);
+  }, [allExpenses]);
+
   const topCategory = byCategory.find((c) => c.currency === primaryCurrency);
   const groupById = useMemo(() => new Map((groups ?? []).map((g) => [g.id, g])), [groups]);
+  const scopeLabel =
+    scope === 'personal'
+      ? ' — doar personale'
+      : scope !== 'all'
+        ? ` — ${groupById.get(scope)?.name ?? 'grup'}`
+        : '';
 
   function currencyTotal(cur: string): number {
     return totalsByCurrency.find(([c]) => c === cur)?.[1] ?? 0;
   }
 
   /* month-over-month, only within the primary currency (no cross-currency math) */
-  const prevTotal = (prevExpenses ?? [])
+  const prevTotal = prevExpenses
     .filter((e) => e.currency === primaryCurrency)
-    .reduce((acc, e) => acc + e.amount, 0);
+    .reduce((acc, e) => acc + e.my_share, 0);
   const currentTotal = currencyTotal(primaryCurrency);
   const trendPct =
     prevTotal > 0 && currentTotal > 0
@@ -418,6 +488,7 @@ export default function DashboardPage() {
           category,
           splitType: 'equal',
           payerId: user.id,
+          currency,
           expenseDate: date,
           participants: (targetMembers ?? []).map((m) => ({ userId: m.user_id })),
         },
@@ -437,17 +508,30 @@ export default function DashboardPage() {
 
   return (
     <>
-      <Greeting>
-        <Hello>
-          {greetingForHour(new Date().getHours())}
-          {firstName ? `, ${firstName}` : ''}
-        </Hello>
-        <HelloSub>Iată cum stau cheltuielile tale.</HelloSub>
-      </Greeting>
+      <TopRow>
+        <Greeting>
+          <Hello>
+            {greetingForHour(new Date().getHours())}
+            {firstName ? `, ${firstName}` : ''}
+          </Hello>
+          <HelloSub>Iată cum stau cheltuielile tale — personale și din grupuri.</HelloSub>
+        </Greeting>
+        <ScopeBox>
+          <Select label="Arată" value={scope} onChange={(e) => setScope(e.target.value)}>
+            <option value="all">Toate cheltuielile</option>
+            <option value="personal">Doar personale</option>
+            {(groups ?? []).map((g) => (
+              <option key={g.id} value={g.id}>
+                Grup: {g.name}
+              </option>
+            ))}
+          </Select>
+        </ScopeBox>
+      </TopRow>
 
     <Bento>
       <HeroTile $static>
-        <CardTitle>Total cheltuit</CardTitle>
+        <CardTitle>Total cheltuit{scopeLabel}</CardTitle>
         <div>
           {totalsByCurrency.length === 0 ? (
             <HeroNumber data-money>{formatMoney(0, currency, 'ro-RO')}</HeroNumber>
@@ -490,7 +574,7 @@ export default function DashboardPage() {
 
       <StatTile $area="count">
         <CardTitle>Tranzacții</CardTitle>
-        <StatValue>{(expenses ?? []).length}</StatValue>
+        <StatValue>{expenses.length}</StatValue>
         <StatHint>în {monthLabel}</StatHint>
       </StatTile>
 
@@ -530,21 +614,12 @@ export default function DashboardPage() {
               setFieldErrors((f) => ({ ...f, amount: undefined }));
             }}
           />
-          <Select
-            label="Monedă"
-            value={targetGroup ? targetGroup.currency : currency}
-            onChange={(e) => setCurrency(e.target.value)}
-            disabled={!!targetGroup}
-            title={targetGroup ? 'Moneda e stabilită de grup' : undefined}
-          >
-            {CURRENCIES.map((c) => (
+          <Select label="Monedă" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+            {currencyOptions(targetGroup?.currency).map((c) => (
               <option key={c.code} value={c.code}>
                 {c.label}
               </option>
             ))}
-            {targetGroup && !CURRENCIES.some((c) => c.code === targetGroup.currency) && (
-              <option value={targetGroup.currency}>{targetGroup.currency}</option>
-            )}
           </Select>
           <Select
             label="Grup (opțional)"
@@ -576,8 +651,8 @@ export default function DashboardPage() {
         </FormGrid>
         {targetGroup && (
           <Muted style={{ marginTop: '0.75rem', fontSize: '0.8rem' }}>
-            Se adaugă în „{targetGroup.name}", plătită de tine și împărțită egal între membri.
-            Pentru împărțiri personalizate folosește pagina grupului.
+            Se adaugă în „{targetGroup.name}", plătită de tine și împărțită egal între membri,
+            în moneda aleasă mai sus. Pentru împărțiri personalizate folosește pagina grupului.
           </Muted>
         )}
         {submitError && <Muted role="alert">Eroare: {(submitError as Error).message}</Muted>}
@@ -610,6 +685,35 @@ export default function DashboardPage() {
             ))}
           </List>
         )}
+
+        {scope === 'all' && byGroup.length > 0 && (
+          <>
+            <SectionTitle>Pe grupuri (partea ta)</SectionTitle>
+            <List>
+              {byGroup.map((g) => (
+                <CatRow key={`${g.groupId}|${g.currency}`}>
+                  <CatHead>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Icon name="flag" size={16} />
+                      <GroupChip to={`/groups/${g.groupId}`}>{g.name}</GroupChip>
+                      {multiCurrency ? ` (${g.currency})` : ''}
+                    </span>
+                    <Amount data-money>{formatMoney(g.sum, g.currency, 'ro-RO')}</Amount>
+                  </CatHead>
+                  <MeterTrack>
+                    <MeterFill
+                      $pct={
+                        currencyTotal(g.currency) > 0
+                          ? (g.sum / currencyTotal(g.currency)) * 100
+                          : 0
+                      }
+                    />
+                  </MeterTrack>
+                </CatRow>
+              ))}
+            </List>
+          </>
+        )}
       </CatsCard>
 
       <ListCard $static>
@@ -638,7 +742,7 @@ export default function DashboardPage() {
         {viewMode === 'monthly' ? (
           isLoading ? (
             <Muted>Se încarcă…</Muted>
-          ) : (expenses ?? []).length === 0 ? (
+          ) : expenses.length === 0 ? (
             <EmptyState
               icon="other"
               title="Nimic pe luna asta"
@@ -646,7 +750,7 @@ export default function DashboardPage() {
             />
           ) : (
             <List>
-              {(expenses ?? []).map((e) => (
+              {expenses.map((e) => (
                 <FeedRow key={e.id}>
                   <CategoryBubble category={e.category} />
                   <RowMain>
@@ -656,17 +760,35 @@ export default function DashboardPage() {
                       {new Intl.DateTimeFormat('ro-RO', { dateStyle: 'medium' }).format(
                         new Date(`${e.expense_date}T00:00:00`),
                       )}
+                      {e.group_id && (
+                        <>
+                          {' · '}
+                          <GroupChip to={`/groups/${e.group_id}`}>
+                            {e.group_name ?? 'grup'}
+                          </GroupChip>
+                        </>
+                      )}
                     </RowMeta>
                   </RowMain>
-                  <Amount data-money>{formatMoney(e.amount, e.currency, 'ro-RO')}</Amount>
-                  <Button
-                    $variant="ghost"
-                    $size="sm"
-                    aria-label={`Șterge ${e.description}`}
-                    onClick={() => deleteExpense.mutate({ id: e.id, group_id: e.group_id })}
-                  >
-                    <Icon name="close" size={15} />
-                  </Button>
+                  <AmountCol>
+                    <Amount data-money>{formatMoney(e.my_share, e.currency, 'ro-RO')}</Amount>
+                    {e.group_id && e.my_share !== e.total_amount && (
+                      <RowMeta data-money>
+                        partea ta din {formatMoney(e.total_amount, e.currency, 'ro-RO')}
+                        {e.paid_by_me ? ' · plătită de tine' : ''}
+                      </RowMeta>
+                    )}
+                  </AmountCol>
+                  {(e.group_id === null || e.created_by === user?.id) && (
+                    <Button
+                      $variant="ghost"
+                      $size="sm"
+                      aria-label={`Șterge ${e.description}`}
+                      onClick={() => deleteExpense.mutate({ id: e.id, group_id: e.group_id })}
+                    >
+                      <Icon name="close" size={15} />
+                    </Button>
+                  )}
                 </FeedRow>
               ))}
             </List>
@@ -681,9 +803,8 @@ export default function DashboardPage() {
           <List>
             {(eventBalances ?? []).map((b) => {
               const g = groupById.get(b.group_id);
-              const cur = g?.currency ?? 'EUR';
               return (
-                <li key={b.group_id}>
+                <li key={`${b.group_id}|${b.currency}`}>
                   <EventRow to={`/groups/${b.group_id}`}>
                     <IconBubble aria-hidden>
                       <Icon name="flag" size={19} />
@@ -691,13 +812,13 @@ export default function DashboardPage() {
                     <RowMain>
                       <RowTitle>{g?.name ?? 'Grup'}</RowTitle>
                       <RowMeta data-money>
-                        partea ta: {formatMoney(b.total_owed, cur, 'ro-RO')} · ai plătit:{' '}
-                        {formatMoney(b.total_paid, cur, 'ro-RO')}
+                        partea ta: {formatMoney(b.total_owed, b.currency, 'ro-RO')} · ai plătit:{' '}
+                        {formatMoney(b.total_paid, b.currency, 'ro-RO')}
                       </RowMeta>
                     </RowMain>
                     <BalancePill $negative={b.net_balance < 0} data-money>
                       {b.net_balance > 0 ? '+' : ''}
-                      {formatMoney(b.net_balance, cur, 'ro-RO')}
+                      {formatMoney(b.net_balance, b.currency, 'ro-RO')}
                     </BalancePill>
                   </EventRow>
                 </li>

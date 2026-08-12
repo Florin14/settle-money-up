@@ -7,6 +7,8 @@ export interface SettlementTransaction {
   /** Creditor — the member who receives. */
   toUserId: string;
   amount: number;
+  /** Debts never mix currencies: a RON debt is settled in RON, a EUR one in EUR. */
+  currency: string;
 }
 
 /**
@@ -24,8 +26,26 @@ export interface SettlementTransaction {
  *
  * Works in integer cents; because each expense's splits sum exactly to its
  * amount, group balances always sum to zero and the loop terminates cleanly.
+ *
+ * Balances arrive per (member, currency); each currency settles independently.
  */
 export function calculateSettlement(balances: GroupBalance[]): SettlementTransaction[] {
+  const byCurrency = new Map<string, GroupBalance[]>();
+  for (const b of balances) {
+    const list = byCurrency.get(b.currency) ?? [];
+    list.push(b);
+    byCurrency.set(b.currency, list);
+  }
+
+  return [...byCurrency.keys()]
+    .sort()
+    .flatMap((currency) => settleOneCurrency(byCurrency.get(currency)!, currency));
+}
+
+function settleOneCurrency(
+  balances: GroupBalance[],
+  currency: string,
+): SettlementTransaction[] {
   const debtors: { userId: string; cents: number }[] = [];
   const creditors: { userId: string; cents: number }[] = [];
 
@@ -53,6 +73,7 @@ export function calculateSettlement(balances: GroupBalance[]): SettlementTransac
         fromUserId: debtor.userId,
         toUserId: creditor.userId,
         amount: fromCents(transfer),
+        currency,
       });
     }
 
